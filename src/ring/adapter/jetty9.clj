@@ -113,7 +113,7 @@
   [options]
   (let [context-server (SslContextFactory$Server.)]
     (.setCipherComparator context-server HTTP2Cipher/COMPARATOR)
-    (let [ssl-provider (or ssl-provider (detect-ssl-provider))]
+    (let [ssl-provider (or (options :ssl-provider) (detect-ssl-provider))]
       (.setProvider context-server ssl-provider))
     (if (string? (options :keystore))
       (.setKeyStorePath context-server (options :keystore))
