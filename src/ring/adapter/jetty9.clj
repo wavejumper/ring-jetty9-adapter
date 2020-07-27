@@ -10,14 +10,15 @@
             HandlerCollection AbstractHandler ContextHandler HandlerList]
            [org.eclipse.jetty.util.thread
             QueuedThreadPool ScheduledExecutorScheduler ThreadPool]
-           [org.eclipse.jetty.util.ssl SslContextFactory]
+           [org.eclipse.jetty.util.ssl SslContextFactory$Server]
            [javax.servlet.http HttpServletRequest HttpServletResponse]
            [javax.servlet AsyncContext]
            [org.eclipse.jetty.http2
             HTTP2Cipher]
            [org.eclipse.jetty.http2.server
             HTTP2CServerConnectionFactory HTTP2ServerConnectionFactory]
-           [org.eclipse.jetty.alpn.server ALPNServerConnectionFactory])
+           [org.eclipse.jetty.alpn.server ALPNServerConnectionFactory]
+           [java.security KeyStore])
   (:require [ring.util.servlet :as servlet]
             [ring.adapter.jetty9.common :refer :all]
             [ring.adapter.jetty9.websocket :refer [proxy-ws-handler] :as ws]))
@@ -108,37 +109,39 @@
       ;; fallback to default jdk provider
       nil)))
 
-(defn- ssl-context-factory
-  "Creates a new SslContextFactory instance from a map of options."
-  [{:as options
-    :keys [keystore keystore-type key-password client-auth key-manager-password
-           truststore trust-password truststore-type ssl-protocols ssl-provider]
-    :or {ssl-protocols ["TLSv1.3" "TLSv1.2"]}}]
-  (let [context (SslContextFactory.)]
-    (.setCipherComparator context HTTP2Cipher/COMPARATOR)
-    (let [ssl-provider (or ssl-provider (detect-ssl-provider))]
-      (.setProvider context ssl-provider))
-    (if (string? keystore)
-      (.setKeyStorePath context keystore)
-      (.setKeyStore context ^java.security.KeyStore keystore))
-    (.setKeyStorePassword context key-password)
-    (when key-manager-password
-      (.setKeyManagerPassword context key-manager-password))
-    (when keystore-type
-      (.setKeyStoreType context keystore-type))
-    (when truststore
-      (.setTrustStore context ^java.security.KeyStore truststore))
-    (when trust-password
-      (.setTrustStorePassword context trust-password))
-    (when truststore-type
-      (.setTrustStoreType context truststore-type))
-    (case client-auth
-      :need (.setNeedClientAuth context true)
-      :want (.setWantClientAuth context true)
+(defn- ^SslContextFactory$Server ssl-context-factory
+  [options]
+  (let [context-server (SslContextFactory$Server.)]
+    (if (string? (options :keystore))
+      (.setKeyStorePath context-server (options :keystore))
+      (.setKeyStore context-server ^KeyStore (options :keystore)))
+    (when (string? (options :keystore-type))
+      (.setKeyStoreType context-server (options :keystore-type)))
+    (.setKeyStorePassword context-server (options :key-password))
+    (when (options :key-manager-password)
+      (.setKeyManagerPassword context-server (options :key-manager-password)))
+    (cond
+      (string? (options :truststore))
+      (.setTrustStorePath context-server (options :truststore))
+      (instance? KeyStore (options :truststore))
+      (.setTrustStore context-server ^KeyStore (options :truststore)))
+    (when (options :trust-password)
+      (.setTrustStorePassword context-server (options :trust-password)))
+    (case (options :client-auth)
+      :need (.setNeedClientAuth context-server true)
+      :want (.setWantClientAuth context-server true)
       nil)
-    (when (not-empty ssl-protocols)
-      (.setIncludeProtocols context (into-array ^String ssl-protocols)))
-    context))
+    (when-let [exclude-ciphers (options :exclude-ciphers)]
+      (let [ciphers (into-array String exclude-ciphers)]
+        (if (options :replace-exclude-ciphers?)
+          (.setExcludeCipherSuites context-server ciphers)
+          (.addExcludeCipherSuites context-server ciphers))))
+    (when-let [exclude-protocols (options :exclude-protocols)]
+      (let [protocols (into-array String exclude-protocols)]
+        (if (options :replace-exclude-protocols?)
+          (.setExcludeProtocols context-server protocols)
+          (.addExcludeProtocols context-server protocols))))
+    context-server))
 
 (defn- https-connector [server http-configuration ssl-context-factory h2? port host max-idle-time]
   (let [secure-connection-factory (concat (when h2? [(ALPNServerConnectionFactory. "h2,http/1.1")
@@ -146,7 +149,7 @@
                                           [(HttpConnectionFactory. http-configuration)])]
     (doto (ServerConnector.
             ^Server server
-            ^SslContextFactory ssl-context-factory
+            ^SslContextFactory$Server ssl-context-factory
             (into-array ConnectionFactory secure-connection-factory))
       (.setPort port)
       (.setHost host)
