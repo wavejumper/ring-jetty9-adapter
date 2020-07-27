@@ -112,6 +112,9 @@
 (defn- ^SslContextFactory$Server ssl-context-factory
   [options]
   (let [context-server (SslContextFactory$Server.)]
+    (.setCipherComparator context-server HTTP2Cipher/COMPARATOR)
+    (let [ssl-provider (or ssl-provider (detect-ssl-provider))]
+      (.setProvider context-server ssl-provider))
     (if (string? (options :keystore))
       (.setKeyStorePath context-server (options :keystore))
       (.setKeyStore context-server ^KeyStore (options :keystore)))
@@ -212,6 +215,16 @@
   :join? - blocks the thread until server ends (defaults to true)
   :daemon? - use daemon threads (defaults to false)
   :ssl? - allow connections over HTTPS
+  :exclude-ciphers      - when :ssl? is true, additionally exclude these
+                          cipher suites
+  :exclude-protocols    - when :ssl? is true, additionally exclude these
+                          protocols
+  :replace-exclude-ciphers?   - when true, :exclude-ciphers will replace rather
+                                than add to the cipher exclusion list (defaults
+                                to false)
+  :replace-exclude-protocols? - when true, :exclude-protocols will replace
+                                rather than add to the protocols exclusion list
+                                (defaults to false)
   :ssl-port - the SSL port to listen on (defaults to 443, implies :ssl?)
   :keystore - the keystore to use for SSL connections
   :keystore-type - the format of keystore
